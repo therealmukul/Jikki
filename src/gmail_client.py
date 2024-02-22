@@ -13,46 +13,60 @@ class GmailClient:
 
     def __init__(self, credentials_path="credentials.json"):
         self.credentials_path = credentials_path
-        self._service = None  # Initialize service later
+        self._service = self._get_gmail_service()
 
     def _get_gmail_service(self):
         """Handles authentication and service creation."""
-        if not self._service:
-            creds = None
-            if os.path.exists("token.pickle"):
-                with open("token.pickle", "rb") as token:
-                    creds = pickle.load(token)
+        creds = None
+        if os.path.exists("token.pickle"):
+            with open("token.pickle", "rb") as token:
+                creds = pickle.load(token)
 
-            if not creds or not creds.valid:
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                else:
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        self.credentials_path, self.SCOPES
-                    )
-                    creds = flow.run_local_server(port=0)
-                with open("token.pickle", "wb") as token:
-                    pickle.dump(creds, token)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_path, self.SCOPES
+                )
+                creds = flow.run_local_server(port=0)
+            with open("token.pickle", "wb") as token:
+                pickle.dump(creds, token)
 
-            self._service = build("gmail", "v1", credentials=creds)
+        self._service = build("gmail", "v1", credentials=creds)
 
         return self._service
 
-    def fetch_new_emails(self):
+    def fetch_new_unread_emails(self):
         """Fetches unread emails after a specific date."""
-        service = self._get_gmail_service()
         today = datetime.date.today().strftime("%Y/%m/%d")
         query = "label:unread after:" + today
         results = (
-            service.users().messages().list(userId="me", q=query).execute()
+            self._service.users()
+            .messages()
+            .list(userId="me", q=query)
+            .execute()
         )
+        return results.get("messages", [])
+
+    def fetch_all_emails_by_date(self, date):
+        """Fetches all emails received on a specific date."""
+        start_date = date.strftime("%Y/%m/%d")
+        end_date = date + datetime.timedelta(days=1)
+        query = f"after: {start_date} before: {end_date}"
+        results = (
+            self._service.users()
+            .messages()
+            .list(userId="me", q=query)
+            .execute()
+        )
+
         return results.get("messages", [])
 
     def extract_email_data(self, message_id):
         """Extracts subject, sender, and body from an email."""
-        service = self._get_gmail_service()
         message = (
-            service.users()
+            self._service.users()
             .messages()
             .get(userId="me", id=message_id)
             .execute()
@@ -83,12 +97,3 @@ class GmailClient:
             )
 
         return subject, sender, body
-
-
-if __name__ == "__main__":
-    client = GmailClient()  # Create a GmailClient object
-    new_emails = client.fetch_new_emails()
-
-    for email_info in new_emails:
-        subject, sender, body = client.extract_email_data(email_info["id"])
-        print(f"From: {sender}\nSubject: {subject}\nBody: {body}\n")
