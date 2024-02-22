@@ -7,89 +7,88 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]  # Read-only access
 
+class GmailClient:
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-def get_gmail_service():
-    creds = None
-    # Token.pickle stores previously saved credentials
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
+    def __init__(self, credentials_path="credentials.json"):
+        self.credentials_path = credentials_path
+        self._service = None  # Initialize service later
 
-    # If there are no (valid) credentials, initiate the OAuth flow
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )  # Replace 'credentials.json' with your file
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.pickle", "wb") as token:
-            pickle.dump(creds, token)
+    def _get_gmail_service(self):
+        """Handles authentication and service creation."""
+        if not self._service:
+            creds = None
+            if os.path.exists("token.pickle"):
+                with open("token.pickle", "rb") as token:
+                    creds = pickle.load(token)
 
-    return build("gmail", "v1", credentials=creds)
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                else:
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.credentials_path, self.SCOPES
+                    )
+                    creds = flow.run_local_server(port=0)
+                with open("token.pickle", "wb") as token:
+                    pickle.dump(creds, token)
 
+            self._service = build("gmail", "v1", credentials=creds)
 
-def fetch_new_emails(service):
-    today = datetime.date.today().strftime("%Y/%m/%d")
-    query = "label:unread after:" + today
+        return self._service
 
-    results = service.users().messages().list(userId="me", q=query).execute()
+    def fetch_new_emails(self):
+        """Fetches unread emails after a specific date."""
+        service = self._get_gmail_service()
+        today = datetime.date.today().strftime("%Y/%m/%d")
+        query = "label:unread after:" + today
+        results = (
+            service.users().messages().list(userId="me", q=query).execute()
+        )
+        return results.get("messages", [])
 
-    return results.get("messages", [])
+    def extract_email_data(self, message_id):
+        """Extracts subject, sender, and body from an email."""
+        service = self._get_gmail_service()
+        message = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id)
+            .execute()
+        )
+        payload = message["payload"]
+        headers = payload["headers"]
 
+        subject = ""
+        sender = ""
+        body = ""
 
-def extract_email_data(service, message_id):
-    body = ""
-    sender = ""
-    subject = ""
+        for header in headers:
+            if header["name"] == "Subject":
+                subject = header["value"]
+            if header["name"] == "From":
+                sender = header["value"]
 
-    message = (
-        service.users().messages().get(userId="me", id=message_id).execute()
-    )
-    payload = message["payload"]
-    headers = payload["headers"]
-
-    for header in headers:
-        if header["name"] == "Subject":
-            subject = header["value"]
-        if header["name"] == "From":
-            sender = header["value"]
-
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part["mimeType"] == "text/plain":
-                body = base64.urlsafe_b64decode(part["body"]["data"]).decode(
-                    "utf-8"
-                )
-                break
-    else:
-        if "body" in payload:
+        if "parts" in payload:
+            for part in payload["parts"]:
+                if part["mimeType"] == "text/plain":
+                    body = base64.urlsafe_b64decode(
+                        part["body"]["data"]
+                    ).decode("utf-8")
+                    break
+        elif "body" in payload:
             body = base64.urlsafe_b64decode(payload["body"]["data"]).decode(
                 "utf-8"
             )
-        else:
-            body = ""
-    print(subject, sender, body)
-    print()
-    return subject, sender, body
+
+        return subject, sender, body
 
 
 if __name__ == "__main__":
-    service = get_gmail_service()
-    new_email_ids = fetch_new_emails(service)
-    print(new_email_ids)
+    client = GmailClient()  # Create a GmailClient object
+    new_emails = client.fetch_new_emails()
 
-    if new_email_ids:
-        for item in new_email_ids:
-            message_id = item["id"]
-            extract_email_data(service, message_id)
-    # if new_email_ids:
-    #     for message_id in new_email_ids:
-    #         subject, sender, body = extract_email_data(message_id)
-    #         print(f"From: {sender}\nSubject: {subject}\nBody: {body}\n")
-    # else:
-    #     print("No new emails found.")
+    for email_info in new_emails:
+        subject, sender, body = client.extract_email_data(email_info["id"])
+        print(f"From: {sender}\nSubject: {subject}\nBody: {body}\n")
