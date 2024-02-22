@@ -2,7 +2,9 @@ import base64
 import pickle
 import os.path
 import datetime
+import re
 
+import markdownify
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -63,6 +65,13 @@ class GmailClient:
 
         return results.get("messages", [])
 
+    @staticmethod
+    def clean_email_body(body):
+        """Prepares the email body for question answering by LLM."""
+        markdown_body = markdownify.markdownify(body, heading_style="ATX")
+
+        return markdown_body
+
     def extract_email_data(self, message_id):
         """Extracts subject, sender, and body from an email."""
         message = (
@@ -96,4 +105,7 @@ class GmailClient:
                 "utf-8"
             )
 
-        return subject, sender, body
+        body = self.clean_email_body(body)
+
+        res = {"sender": sender, "subject": subject, "body": body}
+        return res
